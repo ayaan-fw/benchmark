@@ -215,6 +215,15 @@ class ChunkMetadata:
     prompt_usage_tokens: Optional[int]
 
 
+@dataclass
+class EmbeddingMetadata:
+    dimensions: int
+    usage_tokens: Optional[int]
+    embedding_count: int = 0  # Track how many embeddings were returned
+    embedding: Optional[list] = None  # Only store if needed for debugging
+    all_embeddings: Optional[list] = None  # Store all embeddings for detailed logging
+
+
 class BaseProvider(abc.ABC):
     DEFAULT_MODEL_NAME = None
 
@@ -230,6 +239,35 @@ class BaseProvider(abc.ABC):
 
     @abc.abstractmethod
     def parse_output_json(self, json, prompt): ...
+
+    # New methods for embedding support
+    def get_embedding_url(self):
+        """Override this method for providers that support embeddings"""
+        return "/v1/embeddings"
+    
+    def format_embedding_payload(self, texts):
+        """Override this method for providers that support embeddings"""
+        return {
+            "model": self.model,
+            "input": texts if isinstance(texts, list) else [texts],
+        }
+    
+    def parse_embedding_json(self, data):
+        """Override this method for providers that support embeddings"""
+        usage = data.get("usage", {})
+        embeddings = data.get("data", [])
+        if not embeddings:
+            raise ValueError("No embeddings found in response")
+        
+        # For batch requests, we sum up all dimensions
+        total_dimensions = sum(len(emb.get("embedding", [])) for emb in embeddings)
+        return EmbeddingMetadata(
+            dimensions=total_dimensions,
+            usage_tokens=usage.get("total_tokens"),
+            embedding_count=len(embeddings),  # Track how many embeddings were returned
+            embedding=embeddings[0].get("embedding") if embeddings else None,
+            all_embeddings=[emb.get("embedding") for emb in embeddings] if embeddings else None
+        )
 
 
 class OpenAIProvider(BaseProvider):
@@ -322,6 +360,10 @@ class TogetherProvider(OpenAIProvider):
         if not self.parsed_options.stream:
             data = data["output"]
         return super().parse_output_json(data, prompt)
+        
+    def get_embedding_url(self):
+        # Together.ai uses different URL structure, may need to be adjusted
+        return "/embeddings"
 
 
 class TritonInferProvider(BaseProvider):
@@ -332,6 +374,15 @@ class TritonInferProvider(BaseProvider):
         assert not self.parsed_options.stream, "Stream is not supported"
         assert self.parsed_options.n == 1, "n > 1 is not supported"
         return f"/v2/models/{self.model}/infer"
+    
+    def get_embedding_url(self):
+        raise NotImplementedError("Triton Infer provider does not support embeddings")
+    
+    def format_embedding_payload(self, texts):
+        raise NotImplementedError("Triton Infer provider does not support embeddings")
+    
+    def parse_embedding_json(self, data):
+        raise NotImplementedError("Triton Infer provider does not support embeddings")
 
     def format_payload(self, prompt, max_tokens, images):
         assert images is None, "images are not supported"
@@ -402,6 +453,15 @@ class TritonGenerateProvider(BaseProvider):
         assert not self.parsed_options.chat, "Chat is not supported"
         stream_suffix = "_stream" if self.parsed_options.stream else ""
         return f"/v2/models/{self.model}/generate{stream_suffix}"
+        
+    def get_embedding_url(self):
+        raise NotImplementedError("Triton Generate provider does not support embeddings")
+    
+    def format_embedding_payload(self, texts):
+        raise NotImplementedError("Triton Generate provider does not support embeddings")
+    
+    def parse_embedding_json(self, data):
+        raise NotImplementedError("Triton Generate provider does not support embeddings")
 
     def format_payload(self, prompt, max_tokens, images):
         assert images is None, "images are not supported"
@@ -444,6 +504,15 @@ class TgiProvider(BaseProvider):
         assert not self.parsed_options.chat, "Chat is not supported"
         stream_suffix = "_stream" if self.parsed_options.stream else ""
         return f"/generate{stream_suffix}"
+        
+    def get_embedding_url(self):
+        raise NotImplementedError("TGI provider does not support embeddings")
+    
+    def format_embedding_payload(self, texts):
+        raise NotImplementedError("TGI provider does not support embeddings")
+    
+    def parse_embedding_json(self, data):
+        raise NotImplementedError("TGI provider does not support embeddings")
 
     def format_payload(self, prompt, max_tokens, images):
         assert images is None, "images are not supported"
@@ -579,6 +648,15 @@ class LLMUser(HttpUser):
         self._guess_provider()
         print(f" Provider {self.provider} using model {self.model} ".center(80, "*"))
         self.provider_formatter = PROVIDER_CLASS_MAP[self.provider](self.model, self.environment.parsed_options)
+        
+        # Check if provider supports embedding mode
+        if self.environment.parsed_options.embedding_mode:
+            try:
+                # Test if provider supports embeddings by checking if methods are implemented
+                self.provider_formatter.get_embedding_url()
+                self.provider_formatter.format_embedding_payload(["test"])
+            except NotImplementedError as e:
+                raise ValueError(f"Provider {self.provider} does not support embedding mode: {str(e)}")
 
         self.stream = self.environment.parsed_options.stream
         prompt_chars = self.environment.parsed_options.prompt_chars
@@ -732,6 +810,9 @@ class LLMUser(HttpUser):
 
     @task
     def generate_text(self):
+        if self.environment.parsed_options.embedding_mode:
+            return  # Skip if in embedding mode
+            
         max_tokens = self.max_tokens_sampler.sample()
         prompt, images = self._get_input()
         data = self.provider_formatter.format_payload(prompt, max_tokens, images)
@@ -843,6 +924,65 @@ class LLMUser(HttpUser):
             prompt_tokens = prompt_usage_tokens or self.prompt_tokenizer_tokens
             if prompt_tokens:
                 add_custom_metric("prompt_tokens", prompt_tokens)
+
+            if not self.first_done:
+                self.first_done = True
+                InitTracker.notify_first_request()
+
+    @task
+    def generate_embeddings(self):
+        """Task for testing embedding endpoints"""
+        if not self.environment.parsed_options.embedding_mode:
+            return  # Skip if not in embedding mode
+            
+        prompt, _ = self._get_input()  # We don't use images for embeddings
+        
+        # For embedding batch testing, we can send multiple texts
+        batch_size = self.environment.parsed_options.embedding_batch_size or 1
+        texts = [prompt] if batch_size == 1 else [f"{prompt} {i}" for i in range(batch_size)]
+        
+        data = self.provider_formatter.format_embedding_payload(texts)
+        t_start = time.perf_counter()
+
+        with self.client.post(
+            self.provider_formatter.get_embedding_url(),
+            data=json.dumps(data),
+            catch_response=True,
+        ) as response:
+            try:
+                response.raise_for_status()
+                response_data = response.json()
+                
+                embedding_result = self.provider_formatter.parse_embedding_json(response_data)
+                
+                now = time.perf_counter()
+                dur_total = now - t_start
+                
+                print(f"Embedding response: {dur_total*1000:.2f} ms, {embedding_result.dimensions} dimensions, sent {len(texts)} texts, received {embedding_result.embedding_count} embeddings")
+                
+                if self.environment.parsed_options.show_response and embedding_result.all_embeddings:
+                    print("---")
+                    print(f"Received {embedding_result.embedding_count} embeddings:")
+                    for i, embedding in enumerate(embedding_result.all_embeddings):
+                        if embedding and len(embedding) > 0:
+                            print(f"  Embedding {i+1}: [{', '.join(map(str, embedding[:5]))}...] (showing first 5 of {len(embedding)} dimensions)")
+                        else:
+                            print(f"  Embedding {i+1}: [empty or invalid]")
+                    print("---")
+                
+                # Add custom metrics for embeddings
+                add_custom_metric("embedding_total_latency", dur_total * 1000)
+                add_custom_metric("embedding_dimensions", embedding_result.dimensions)
+                add_custom_metric("embeddings_per_request", len(texts))
+                add_custom_metric("latency_per_embedding", dur_total / len(texts) * 1000, len(texts))
+                
+                if embedding_result.usage_tokens:
+                    add_custom_metric("embedding_usage_tokens", embedding_result.usage_tokens)
+                    
+            except Exception as e:
+                print(f"Failed to parse embedding response: {response.text} with error {repr(e)}")
+                response.failure(e)
+                return
 
             if not self.first_done:
                 self.first_done = True
@@ -1036,11 +1176,33 @@ def init_parser(parser):
         type=int,
         help="How many sequences to generate (makes sense to use with non-zero temperature).",
     )
+    parser.add_argument(
+        "--embedding-mode",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Test embedding endpoints instead of text generation",
+    )
+    parser.add_argument(
+        "--embedding-batch-size",
+        type=int,
+        default=1,
+        help="Number of texts to embed in a single request (for batch embedding testing)",
+    )
 
 
 @events.quitting.add_listener
 def _(environment, **kw):
-    total_latency = environment.stats.entries[("total_latency", "METRIC")]
+    if environment.parsed_options.embedding_mode:
+        main_latency_metric = ("embedding_total_latency", "METRIC")
+    else:
+        main_latency_metric = ("total_latency", "METRIC")
+        
+    if main_latency_metric not in environment.stats.entries:
+        print(f"Test failed - no {main_latency_metric[0]} metrics found")
+        environment.process_exit_code = 1
+        return
+        
+    total_latency = environment.stats.entries[main_latency_metric]
     if environment.stats.total.num_failures > 0 or total_latency.num_requests == 0:
         print("Test failed due to failed requests")
         environment.process_exit_code = 1
@@ -1051,14 +1213,26 @@ def _(environment, **kw):
         entries["concurrency"] = f"QPS {environment.parsed_options.qps} {environment.parsed_options.qps_distribution}"
     else:
         entries["concurrency"] = InitTracker.users
-    for metric_name in [
-        "time_to_first_token",
-        "latency_per_token",
-        "num_tokens",
-        "total_latency",
-        "prompt_tokens",  # might overwrite the static value based on server side tokenization
-    ]:
-        entries[metric_name] = environment.stats.entries[(metric_name, "METRIC")].avg_response_time
+    # Add metrics based on mode
+    if environment.parsed_options.embedding_mode:
+        for metric_name in [
+            "embedding_total_latency",
+            "embedding_dimensions", 
+            "embeddings_per_request",
+            "latency_per_embedding",
+            "embedding_usage_tokens",
+        ]:
+            if (metric_name, "METRIC") in environment.stats.entries:
+                entries[metric_name] = environment.stats.entries[(metric_name, "METRIC")].avg_response_time
+    else:
+        for metric_name in [
+            "time_to_first_token",
+            "latency_per_token",
+            "num_tokens",
+            "total_latency",
+            "prompt_tokens",  # might overwrite the static value based on server side tokenization
+        ]:
+            entries[metric_name] = environment.stats.entries[(metric_name, "METRIC")].avg_response_time
     if not environment.parsed_options.stream:
         # if there's no streaming these metrics are meaningless
         entries["time_to_first_token"] = ""
@@ -1066,12 +1240,17 @@ def _(environment, **kw):
     entries["num_requests"] = total_latency.num_requests
     entries["qps"] = total_latency.total_rps
     percentile_to_report = [50, 90, 95, 99, 99.9]
-    percentile_metrics = ["time_to_first_token", "total_latency"]
+    if environment.parsed_options.embedding_mode:
+        percentile_metrics = ["embedding_total_latency", "latency_per_embedding"]
+    else:
+        percentile_metrics = ["time_to_first_token", "total_latency"]
+        
     for percentile_metric in percentile_metrics:
-        metrics = environment.stats.entries[percentile_metric, "METRIC"]
-        for percentile in percentile_to_report:
-            name = f"P{percentile}_{percentile_metric}"
-            entries[name] = metrics.get_response_time_percentile(percentile / 100)
+        if (percentile_metric, "METRIC") in environment.stats.entries:
+            metrics = environment.stats.entries[percentile_metric, "METRIC"]
+            for percentile in percentile_to_report:
+                name = f"P{percentile}_{percentile_metric}"
+                entries[name] = metrics.get_response_time_percentile(percentile / 100)
 
     pretty_name = lambda s: " ".join([w.capitalize() for w in s.split("_")])
     entries = {pretty_name(k): v for k, v in entries.items()}
