@@ -16,6 +16,12 @@ prompt_length = 1000    # Input text length for embeddings
 embedding_batch_size = 4 # Number of texts to embed in a single request
 t = "15min"              # test duration, set to 2 minutes for now
 
+provider_name = "fireworks"
+# Using Fireworks embedding model instead of text generation model
+model_name = "accounts/ayaan-f375b0/models/qwen3-embedding-8b"
+h = "https://ayaan-f375b0-snof10fb.us-illinois-1.direct.fireworks.ai" #host url
+
+
 # Logging configuration
 show_embedding_responses = True  # Set to True to see embedding responses (first few dimensions)
 verbose_logging = False  # Set to True for more detailed logging output
@@ -56,12 +62,6 @@ FIREWORKS_API_KEY=<your_fireworks_api_key>.
 
 Alternatively you can edit the following script flags for custom configurations.
 '''
-
-
-provider_name = "fireworks"
-# Using Fireworks embedding model instead of text generation model
-model_name = "accounts/ayaan-f375b0/models/qwen3-embedding-8b"
-h = "https://ayaan-f375b0-snof10fb.us-illinois-1.direct.fireworks.ai" #host url
 
 for users in concurrency_users:
     # Create results directory based on concurrency instead of RPM
