@@ -250,6 +250,7 @@ class BaseProvider(abc.ABC):
         return {
             "model": self.model,
             "input": texts if isinstance(texts, list) else [texts],
+            "prompt_cache_max_len": 0,
         }
     
     def parse_embedding_json(self, data):

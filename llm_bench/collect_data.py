@@ -10,7 +10,7 @@ Change constants here
 """
 api_key = os.getenv('DR_API_KEY')
 deployment_id = "ed026bc8"
-concurrency_users = [10]  # Number of concurrent workers (changed from rpms)
+concurrency_users = [20]  # Number of concurrent workers (changed from rpms)
 spawn_rate = 100          # Rate of spawning new workers (workers/second)
 prompt_length = 1000    # Input text length for embeddings
 embedding_batch_size = 4 # Number of texts to embed in a single request
@@ -19,7 +19,7 @@ t = "15min"              # test duration, set to 2 minutes for now
 provider_name = "fireworks"
 # Using Fireworks embedding model instead of text generation model
 model_name = "accounts/ayaan-f375b0/models/qwen3-embedding-8b"
-h = "https://ayaan-f375b0-snof10fb.us-illinois-1.direct.fireworks.ai" #host url
+h = "https://pyroworks-i9zno67d.us-illinois-1.direct.fireworks.ai" #host url
 
 
 # Logging configuration
