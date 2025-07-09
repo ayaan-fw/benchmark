@@ -21,22 +21,10 @@ spawn_rate = 100          # Rate of spawning new workers (workers/second)
 # Burst testing mode settings
 burst_configs = [
     {
-        "users": 100,           # Number of users in each burst
-        "burst_interval": 1.0,  # Interval between bursts in seconds
-        "target_rpm": 6000,     # Target requests per minute
-        "description": "100 users every 1 second (6000 RPM)"
-    },
-    {
-        "users": 50,
-        "burst_interval": 0.5,
-        "target_rpm": 6000,
-        "description": "50 users every 0.5 seconds (6000 RPM)"
-    },
-    {
-        "users": 200,
-        "burst_interval": 2.0,
-        "target_rpm": 6000,
-        "description": "200 users every 2 seconds (6000 RPM)"
+        "users": 250,           # Number of users in each burst
+        "burst_interval": 5.0,  # Interval between bursts in seconds
+        "target_rpm": 3000,     # Target requests per minute (250 * 12 = 3000)
+        "description": "250 users every 5 seconds (3000 RPM)"
     }
 ]
 
@@ -53,6 +41,7 @@ h = "https://pyroworks-dev-ejdyohmt.us-illinois-1.direct.fireworks.ai" #host url
 # Logging configuration
 show_embedding_responses = True  # Set to True to see embedding responses (first few dimensions)
 verbose_logging = False  # Set to True for more detailed logging output
+enable_web_ui = False    # Set to True to enable Locust web UI for real-time monitoring
 
 #Function to utilize subprocess to run the locust script
 def execute_subprocess(cmd):
@@ -88,14 +77,24 @@ def validate_burst_config(config):
     # Calculate actual RPM based on configuration
     bursts_per_minute = 60 / burst_interval
     actual_rpm = users * bursts_per_minute
+    bursts_per_hour = bursts_per_minute * 60
     
     print(f"Burst validation:")
     print(f"  Users per burst: {users}")
     print(f"  Burst interval: {burst_interval}s")
     print(f"  Bursts per minute: {bursts_per_minute:.2f}")
+    print(f"  Bursts per hour: {bursts_per_hour:.0f}")
     print(f"  Calculated RPM: {actual_rpm:.0f}")
     print(f"  Target RPM: {target_rpm}")
     print(f"  RPM difference: {abs(actual_rpm - target_rpm):.0f}")
+    
+    # Show timing examples
+    print(f"\nTiming pattern preview:")
+    print(f"  At time 0s: {users} requests sent")
+    print(f"  At time {burst_interval}s: {users} requests sent")
+    print(f"  At time {burst_interval*2}s: {users} requests sent")
+    print(f"  At time {burst_interval*3}s: {users} requests sent")
+    print(f"  ...")
     
     if abs(actual_rpm - target_rpm) > target_rpm * 0.05:  # 5% tolerance
         print(f"WARNING: Actual RPM ({actual_rpm:.0f}) differs from target ({target_rpm}) by more than 5%")
@@ -129,7 +128,6 @@ def run_constant_concurrency_test():
         # Construct the command
         cmd = [
             "locust",
-            "--headless",       # Run without web UI
             "-H", h,           # Host URL
             "--provider", provider_name,
             "--model", model_name,
@@ -138,6 +136,12 @@ def run_constant_concurrency_test():
             "--html", f"{results_dir}/report.html",  # Generate HTML report
             "--csv", f"{results_dir}/stats",        # Generate CSV stats
         ]
+        
+        # Add headless flag unless web UI is enabled
+        if not enable_web_ui:
+            cmd.append("--headless")
+        else:
+            print(f"🌐 Web UI will be available at: http://localhost:8089")
 
         # Add concurrency-based parameters (no QPS mode)
         cmd.extend([
@@ -191,7 +195,6 @@ def run_burst_tests():
         # Construct the command
         cmd = [
             "locust",
-            "--headless",       # Run without web UI
             "-H", h,           # Host URL
             "--provider", provider_name,
             "--model", model_name,
@@ -200,6 +203,12 @@ def run_burst_tests():
             "--html", f"{results_dir}/report.html",  # Generate HTML report
             "--csv", f"{results_dir}/stats",        # Generate CSV stats
         ]
+        
+        # Add headless flag unless web UI is enabled
+        if not enable_web_ui:
+            cmd.append("--headless")
+        else:
+            print(f"🌐 Web UI will be available at: http://localhost:8089")
 
         # Add burst-specific parameters
         cmd.extend([
