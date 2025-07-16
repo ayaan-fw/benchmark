@@ -135,28 +135,23 @@ PROMPT_VARIABLES = {
 }
 
 def estimate_tokens(text: str) -> int:
-    """Much more aggressive token estimation to actually reach target tokens"""
-    # User feedback: targeting 15k but getting 4k means we need to be ~4x more aggressive
-    # Real tokenizers produce many more tokens than our conservative estimates
-    
-    words = text.split()
+    """Simple character-based token estimation"""
+    # Based on empirical observation: aim for ~4 characters per token for technical content
+    # This is a rough approximation - the real goal is to get close to target length
     chars = len(text)
-    
-    # Be extremely aggressive - aim for 4x more content than before
-    word_based = len(words) * 4.5    # Much higher ratio to account for subword tokenization
-    char_based = chars / 1.5         # More tokens per character for technical content
-    
-    # Use the higher estimate and add extra buffer
-    estimated = int(max(word_based, char_based) * 1.2)  # 20% safety buffer
+    estimated = chars // 4  # Roughly 4 chars per token
     return estimated
 
 def generate_cacheable_prompt(target_tokens: int, cache_prefix_ratio: float = 0.15) -> str:
     """Generate a prompt with cacheable prefix and diverse suffix for MoE testing"""
     
-    cache_prefix_tokens = int(target_tokens * cache_prefix_ratio)
-    variable_suffix_tokens = target_tokens - cache_prefix_tokens
+    # Convert token targets to character targets (rough approximation)
+    # Be more conservative with character-to-token ratio
+    target_chars = target_tokens * 4  # Aim for ~4 characters per token (more conservative)
+    cache_prefix_chars = int(target_chars * cache_prefix_ratio)
+    variable_suffix_chars = target_chars - cache_prefix_chars
     
-    # Simple, consistent cacheable prefix - more likely to be cached effectively
+    # Simple, consistent cacheable prefix
     base_prefix = """You are an expert AI assistant with comprehensive knowledge across technology, science, business, healthcare, and education. 
 
 Core Instructions:
@@ -179,46 +174,20 @@ Technical Requirements:
 - Include testing methodologies, quality assurance protocols, and automated validation approaches
 - Cover deployment strategies, infrastructure management, and operational excellence practices"""
 
-    # Build up the cacheable prefix with repetitive but valuable content for better caching
+    # Build up the cacheable prefix with repetitive content
     cache_prefix = base_prefix
     
-    # Add much more substantial padding blocks to reach cache target
-    padding_blocks = [
-        "Advanced system architecture design patterns and implementation strategies for enterprise-scale applications.",
-        "Comprehensive security frameworks and threat mitigation approaches including zero-trust architectures.",
-        "Data governance protocols and privacy protection mechanisms with regulatory compliance considerations.",
-        "Performance optimization techniques and scalability considerations for high-throughput distributed systems.",
-        "Quality assurance methodologies and testing automation strategies across multiple deployment environments.",
-        "Compliance frameworks and regulatory requirement assessments for global market operations.",
-        "Risk management protocols and mitigation strategy development with quantitative analysis methods.",
-        "Integration patterns and interoperability design considerations for heterogeneous technology stacks.",
-        "User experience optimization and accessibility standard compliance with inclusive design principles.",
-        "Monitoring and observability implementation with alerting mechanisms and intelligent automation systems.",
-        "DevOps practices and continuous integration/deployment pipelines with automated testing frameworks.",
-        "Cloud-native architectures and container orchestration strategies for microservices deployments.",
-        "Database optimization and data modeling approaches for high-performance analytical workloads.",
-        "Machine learning operations and model lifecycle management in production environments.",
-        "API design and versioning strategies for backward compatibility and system evolution."
-    ]
+    # Simple padding to reach target cache size
+    padding_text = " Consider comprehensive system architecture design patterns and implementation strategies for enterprise-scale applications including security frameworks and data governance protocols."
     
-    current_cache_tokens = estimate_tokens(cache_prefix)
-    padding_index = 0
+    while len(cache_prefix) < cache_prefix_chars:
+        cache_prefix += padding_text
     
-    # Be much more aggressive in building the cache prefix
-    while current_cache_tokens < cache_prefix_tokens:
-        # Use multiple padding blocks per iteration for faster growth
-        for _ in range(3):  # Add 3 blocks per iteration
-            padding = padding_blocks[padding_index % len(padding_blocks)]
-            cache_prefix += f"\n\nConsider comprehensive {padding} Include detailed analysis of implementation trade-offs, operational impacts, and strategic business alignment factors."
-            padding_index += 1
-        current_cache_tokens = estimate_tokens(cache_prefix)
-        
-        # Add extra substantial content if we're still far from target
-        if current_cache_tokens < cache_prefix_tokens * 0.7:
-            cache_prefix += f"\n\nAdditionally, evaluate cross-functional requirements including stakeholder engagement, change management processes, training and adoption strategies, performance monitoring and optimization, continuous improvement methodologies, and long-term strategic business objective alignment."
-            current_cache_tokens = estimate_tokens(cache_prefix)
+    # Truncate to exact target if we went over
+    if len(cache_prefix) > cache_prefix_chars:
+        cache_prefix = cache_prefix[:cache_prefix_chars]
     
-    # Generate diverse variable suffix that changes each request
+    # Generate diverse variable suffix
     template = random.choice(PROMPT_TEMPLATES)
     
     # Fill in variables for diverse content
@@ -227,53 +196,15 @@ Technical Requirements:
         if '{' + var_type + '}' in variable_suffix:
             variable_suffix = variable_suffix.replace('{' + var_type + '}', random.choice(options))
     
-    # Build suffix to target length with much more aggressive content generation
-    current_suffix_tokens = estimate_tokens(variable_suffix)
+    # Build suffix with diverse content
+    expansion_text = " Provide comprehensive analysis including detailed practical examples, step-by-step implementation guidance, measurable outcomes and KPIs, stakeholder considerations across organizational levels, comprehensive risk factor analysis, and detailed success criteria with quantitative benchmarks. Address technical requirements and constraints, business operational impacts, regulatory compliance considerations, and long-term sustainability factors including maintenance, scaling, and evolution strategies. Consider integration with existing systems, data migration requirements, training and change management needs, and ongoing support structures."
     
-    # Keep adding diverse content until we reach target - remove expansion limit
-    expansion_count = 0
-    while current_suffix_tokens < variable_suffix_tokens and expansion_count < 500:  # Much higher safety limit
-        
-        # Generate much larger blocks of diverse content per iteration
-        domain_areas = ["technical implementation", "business strategy", "user experience", 
-                       "security architecture", "performance optimization", "regulatory compliance",
-                       "market analysis", "stakeholder engagement", "risk assessment", "innovation strategy",
-                       "data management", "cloud infrastructure", "DevOps practices", "quality assurance",
-                       "project management", "team leadership", "customer success", "product development",
-                       "financial modeling", "competitive analysis", "vendor management", "technology roadmaps"]
-        
-        aspects = ["comprehensive analysis", "detailed evaluation", "strategic planning", 
-                  "implementation roadmap", "best practices review", "competitive assessment",
-                  "stakeholder impact", "resource requirements", "timeline considerations", "success metrics",
-                  "risk mitigation", "cost optimization", "performance tuning", "scalability planning",
-                  "security assessment", "compliance validation", "user testing", "market research",
-                  "technology evaluation", "vendor selection", "process optimization", "workflow design"]
-        
-        contexts = ["enterprise environments", "scalable solutions", "cross-functional teams",
-                   "regulatory frameworks", "global markets", "emerging technologies", "industry standards",
-                   "customer requirements", "operational efficiency", "strategic objectives", "digital transformation",
-                   "agile methodologies", "cloud-native architectures", "distributed systems", "microservices",
-                   "data-driven decisions", "AI-powered solutions", "sustainable practices", "innovation labs",
-                   "startup ecosystems", "mature organizations", "hybrid work environments", "remote teams"]
-        
-        # Generate much longer, more detailed expansions with multiple sentences
-        expansion = f""" Provide comprehensive {random.choice(aspects)} of {random.choice(domain_areas)} within {random.choice(contexts)}, including detailed practical examples, step-by-step implementation guidance, measurable outcomes and KPIs, stakeholder considerations across organizational levels, comprehensive risk factor analysis, and detailed success criteria with quantitative benchmarks. Address technical requirements and constraints, business operational impacts, regulatory compliance considerations, and long-term sustainability factors including maintenance, scaling, and evolution strategies. Consider integration with existing systems, data migration requirements, training and change management needs, and ongoing support structures. Evaluate cost implications, resource allocation strategies, timeline dependencies, and potential roadblocks with mitigation approaches."""
-        
-        variable_suffix += expansion
-        current_suffix_tokens = estimate_tokens(variable_suffix)
-        expansion_count += 1
-        
-        # Add substantial padding every 5 iterations if we're still far from target
-        if expansion_count % 5 == 0 and current_suffix_tokens < variable_suffix_tokens * 0.8:
-            substantial_padding = f""" Furthermore, examine the broader organizational implications of this approach across multiple business units and functional areas, including comprehensive change management strategies, detailed training and knowledge transfer requirements, technology adoption and user acceptance processes, performance monitoring and continuous optimization frameworks, iterative improvement methodologies, stakeholder communication and engagement plans, and strategic business objective alignment with measurable ROI considerations. Analyze competitive positioning, market differentiation opportunities, customer impact assessments, and long-term value creation potential."""
-            variable_suffix += substantial_padding
-            current_suffix_tokens = estimate_tokens(variable_suffix)
-        
-        # Add even more aggressive padding if we're still significantly under target
-        if expansion_count % 10 == 0 and current_suffix_tokens < variable_suffix_tokens * 0.6:
-            aggressive_padding = f""" Additionally, conduct thorough analysis of ecosystem dependencies, third-party integrations, vendor relationships, licensing considerations, intellectual property implications, data governance and privacy requirements, security architecture and threat modeling, disaster recovery and business continuity planning, scalability testing and capacity planning, performance benchmarking and optimization strategies, user experience research and design thinking methodologies, accessibility compliance and inclusive design principles, internationalization and localization requirements, and comprehensive documentation and knowledge management systems."""
-            variable_suffix += aggressive_padding
-            current_suffix_tokens = estimate_tokens(variable_suffix)
+    while len(variable_suffix) < variable_suffix_chars:
+        variable_suffix += expansion_text
+    
+    # Truncate to exact target if we went over
+    if len(variable_suffix) > variable_suffix_chars:
+        variable_suffix = variable_suffix[:variable_suffix_chars]
     
     # Combine prefix and suffix
     full_prompt = cache_prefix + "\n\n=== SPECIFIC TASK ===\n" + variable_suffix
