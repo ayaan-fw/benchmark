@@ -135,20 +135,21 @@ PROMPT_VARIABLES = {
 }
 
 def estimate_tokens(text: str) -> int:
-    """Better token estimation using word count and character analysis"""
-    # More accurate estimation based on typical tokenization patterns
+    """More accurate token estimation based on actual tokenization patterns"""
+    # Based on user feedback: 5.2k estimated → 7.59k actual tokens
+    # So real tokenizers produce ~46% more tokens than my estimate
+    # Need to be much more aggressive in generation
+    
     words = text.split()
     chars = len(text)
     
-    # Estimate based on multiple factors:
-    # - Average word length and typical subword tokenization
-    # - Character count with adjustment for whitespace
-    # - This is more accurate than simple char/4 ratio
-    word_tokens = len(words) * 1.3  # Average 1.3 tokens per word
-    char_tokens = chars / 3.5       # More accurate ratio for technical text
+    # Much more aggressive estimation to match real tokenizer behavior
+    word_based = len(words) * 2.2    # Higher ratio for technical/mixed content  
+    char_based = chars / 2.0         # More tokens per character
     
-    # Use the higher estimate to be conservative
-    return int(max(word_tokens, char_tokens))
+    # Use the higher estimate for safety
+    estimated = int(max(word_based, char_based))
+    return estimated
 
 def generate_cacheable_prompt(target_tokens: int, cache_prefix_ratio: float = 0.15) -> str:
     """Generate a prompt with cacheable prefix and diverse suffix for MoE testing"""
@@ -156,49 +157,56 @@ def generate_cacheable_prompt(target_tokens: int, cache_prefix_ratio: float = 0.
     cache_prefix_tokens = int(target_tokens * cache_prefix_ratio)
     variable_suffix_tokens = target_tokens - cache_prefix_tokens
     
-    # Shared cacheable prefix (consistent across requests)
-    cache_prefix = """You are an expert AI assistant with deep knowledge across multiple domains including technology, science, business, healthcare, education, and creative fields. Your expertise spans software development, data analysis, machine learning, cybersecurity, biotechnology, financial systems, legal frameworks, environmental science, and educational methodologies.
+    # Simple, consistent cacheable prefix - more likely to be cached effectively
+    base_prefix = """You are an expert AI assistant with comprehensive knowledge across technology, science, business, healthcare, and education. 
 
-When providing responses, you should:
-1. Draw from comprehensive knowledge across disciplines
-2. Provide detailed technical explanations with practical examples
-3. Consider multiple perspectives and interdisciplinary connections
-4. Include current best practices and emerging trends
-5. Address implementation challenges and real-world constraints
-6. Incorporate relevant metrics, benchmarks, and performance considerations
-7. Discuss ethical implications and societal impacts
-8. Provide actionable recommendations with clear justification
-9. Consider scalability, maintainability, and long-term viability
-10. Address security, compliance, and risk management aspects
+Core Instructions:
+- Provide detailed technical analysis with practical examples
+- Consider multiple perspectives and interdisciplinary connections  
+- Include current best practices and emerging trends
+- Address implementation challenges and real-world constraints
+- Incorporate relevant metrics and performance considerations
+- Discuss ethical implications and societal impacts
+- Provide actionable recommendations with clear justification
+- Consider scalability, security, and long-term viability
 
-Your responses should integrate cross-functional requirements including performance optimization, user experience design, accessibility standards, internationalization needs, monitoring and observability, testing strategies, deployment considerations, and environmental sustainability factors."""
+Technical Requirements:
+- Integrate performance optimization and reliability considerations
+- Address compliance, governance, and risk management aspects
+- Include cost-benefit analysis and resource allocation strategies
+- Discuss integration patterns, data flow, and system boundaries
+- Consider user experience, accessibility, and internationalization
+- Address monitoring, logging, and observability requirements
+- Include testing strategies and quality assurance approaches"""
+
+    # Build up the cacheable prefix with repetitive but valuable content
+    cache_prefix = base_prefix
     
-    # Pad the prefix to reach target cache tokens
-    current_cache_tokens = estimate_tokens(cache_prefix)
-    
-    # Add technical padding to reach cache prefix target
-    cache_padding_elements = [
-        "Advanced algorithmic optimization techniques", "Distributed systems architecture patterns",
-        "Machine learning model deployment strategies", "Cybersecurity threat mitigation frameworks",
-        "Data governance and privacy protection protocols", "Cloud-native application development methodologies",
-        "Microservices integration and orchestration patterns", "Real-time analytics and streaming processing",
-        "Artificial intelligence ethics and responsible AI practices", "Blockchain consensus mechanisms and cryptographic security",
-        "Internet of Things device management and edge computing", "DevOps automation and continuous integration pipelines",
-        "Database optimization and performance tuning strategies", "Network security and intrusion detection systems",
-        "Container orchestration and service mesh technologies", "API design patterns and RESTful architecture principles",
-        "Serverless computing and function-as-a-service platforms", "Identity and access management frameworks",
-        "Disaster recovery and business continuity planning", "Compliance frameworks and regulatory requirements",
-        "Quality assurance and automated testing methodologies", "Agile development and project management practices",
-        "User interface design and human-computer interaction", "Performance monitoring and observability tools",
-        "Data visualization and business intelligence systems", "Enterprise integration patterns and middleware solutions"
+    # Add consistent padding to reach cache target - using repetitive patterns for better caching
+    padding_blocks = [
+        "Advanced system architecture design patterns and implementation strategies.",
+        "Comprehensive security frameworks and threat mitigation approaches.",
+        "Data governance protocols and privacy protection mechanisms.",
+        "Performance optimization techniques and scalability considerations.",
+        "Quality assurance methodologies and testing automation strategies.",
+        "Compliance frameworks and regulatory requirement assessments.",
+        "Risk management protocols and mitigation strategy development.",
+        "Integration patterns and interoperability design considerations.",
+        "User experience optimization and accessibility standard compliance.",
+        "Monitoring and observability implementation with alerting mechanisms."
     ]
     
-    while current_cache_tokens < cache_prefix_tokens:
-        padding = random.choice(cache_padding_elements)
-        cache_prefix += f" Consider {padding} in your analysis."
-        current_cache_tokens = estimate_tokens(cache_prefix)
+    current_cache_tokens = estimate_tokens(cache_prefix)
+    padding_index = 0
     
-    # Generate diverse variable suffix
+    while current_cache_tokens < cache_prefix_tokens:
+        # Use padding blocks in sequence for consistency
+        padding = padding_blocks[padding_index % len(padding_blocks)]
+        cache_prefix += f"\n\nConsider {padding}"
+        current_cache_tokens = estimate_tokens(cache_prefix)
+        padding_index += 1
+    
+    # Generate diverse variable suffix that changes each request
     template = random.choice(PROMPT_TEMPLATES)
     
     # Fill in variables for diverse content
@@ -207,45 +215,47 @@ Your responses should integrate cross-functional requirements including performa
         if '{' + var_type + '}' in variable_suffix:
             variable_suffix = variable_suffix.replace('{' + var_type + '}', random.choice(options))
     
-    # Add diverse context to reach target suffix length
-    context_additions = [
-        "Provide comprehensive technical documentation with code examples and implementation details.",
-        "Include step-by-step tutorials and hands-on practical exercises for better understanding.",
-        "Analyze competitive landscape and market positioning strategies with detailed case studies.",
-        "Examine regulatory compliance requirements and legal implications across different jurisdictions.",
-        "Explore innovative approaches and cutting-edge research developments in the field.",
-        "Discuss integration challenges and interoperability considerations with existing systems.",
-        "Address scalability concerns and performance optimization techniques for large-scale deployment.",
-        "Consider user adoption strategies and change management processes for successful implementation.",
-        "Evaluate cost-benefit analysis and return on investment calculations for stakeholder buy-in.",
-        "Assess risk factors and develop comprehensive mitigation strategies with contingency planning."
-    ]
-    
+    # Build suffix to target length with diverse content
     current_suffix_tokens = estimate_tokens(variable_suffix)
-    additions_used = set()
     
-    while current_suffix_tokens < variable_suffix_tokens:
-        available_additions = [add for add in context_additions if add not in additions_used]
+    # Keep adding diverse content until we reach target - be more aggressive
+    expansion_count = 0
+    while current_suffix_tokens < variable_suffix_tokens and expansion_count < 200:  # Higher safety limit
         
-        if not available_additions:
-            # Generate dynamic elaborations
-            dynamic_elaborations = [
-                f"Furthermore, examine the impact on {random.choice(['stakeholder relationships', 'operational efficiency', 'technological innovation', 'market dynamics', 'regulatory compliance'])} and develop strategic responses.",
-                f"Additionally, consider {random.choice(['emerging technologies', 'industry standards', 'best practices', 'competitive pressures', 'customer expectations'])} that may influence decision-making processes.",
-                f"Moreover, analyze {random.choice(['data quality requirements', 'security protocols', 'performance metrics', 'user experience factors', 'integration patterns'])} that are critical for successful implementation.",
-                f"It's essential to evaluate {random.choice(['resource allocation', 'timeline constraints', 'budget considerations', 'technical limitations', 'organizational capabilities'])} when planning the approach.",
-                f"Consider the implications of {random.choice(['technological trends', 'market shifts', 'regulatory changes', 'competitive moves', 'customer behavior'])} on long-term strategy and adaptation."
-            ]
-            addition = random.choice(dynamic_elaborations)
-        else:
-            addition = random.choice(available_additions)
-            additions_used.add(addition)
+        # Generate substantial blocks of diverse content
+        domain_areas = ["technical implementation", "business strategy", "user experience", 
+                       "security architecture", "performance optimization", "regulatory compliance",
+                       "market analysis", "stakeholder engagement", "risk assessment", "innovation strategy",
+                       "data management", "cloud infrastructure", "DevOps practices", "quality assurance",
+                       "project management", "team leadership", "customer success", "product development"]
         
-        variable_suffix += " " + addition
+        aspects = ["comprehensive analysis", "detailed evaluation", "strategic planning", 
+                  "implementation roadmap", "best practices review", "competitive assessment",
+                  "stakeholder impact", "resource requirements", "timeline considerations", "success metrics",
+                  "risk mitigation", "cost optimization", "performance tuning", "scalability planning",
+                  "security assessment", "compliance validation", "user testing", "market research"]
+        
+        contexts = ["enterprise environments", "scalable solutions", "cross-functional teams",
+                   "regulatory frameworks", "global markets", "emerging technologies", "industry standards",
+                   "customer requirements", "operational efficiency", "strategic objectives", "digital transformation",
+                   "agile methodologies", "cloud-native architectures", "distributed systems", "microservices",
+                   "data-driven decisions", "AI-powered solutions", "sustainable practices"]
+        
+        # Generate longer, more detailed expansions
+        expansion = f" Provide {random.choice(aspects)} of {random.choice(domain_areas)} within {random.choice(contexts)}, including practical examples, implementation steps, measurable outcomes, stakeholder considerations, risk factors, and success criteria. Address technical requirements, business constraints, operational impacts, and long-term sustainability factors."
+        
+        variable_suffix += expansion
         current_suffix_tokens = estimate_tokens(variable_suffix)
+        expansion_count += 1
+        
+        # Add extra padding if we're still far from target
+        if expansion_count % 10 == 0 and current_suffix_tokens < variable_suffix_tokens * 0.8:
+            padding = f" Consider the broader implications of this approach across organizational boundaries, including change management, training requirements, technology adoption, performance monitoring, continuous improvement processes, and alignment with strategic business objectives."
+            variable_suffix += padding
+            current_suffix_tokens = estimate_tokens(variable_suffix)
     
     # Combine prefix and suffix
-    full_prompt = cache_prefix + "\n\nSpecific Task: " + variable_suffix
+    full_prompt = cache_prefix + "\n\n=== SPECIFIC TASK ===\n" + variable_suffix
     
     return full_prompt
 
