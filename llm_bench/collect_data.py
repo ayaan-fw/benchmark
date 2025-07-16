@@ -8,7 +8,7 @@ import time
 """
 Change constants here
 """
-api_key = "fw_3ZQ1AFqKBmBjtcRUe4xTATTq"
+api_key = "xxx"
 deployment_id = "oi1gnwjr"
 us = [5,30,50,70,100,150,200,250]     # Number of concurrent workers
 r = 75      # Rate of spawning new workers (workers/second). Look through README.md for more details on spawn rate
