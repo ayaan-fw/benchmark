@@ -35,6 +35,220 @@ def add_custom_metric(name, value, length_value=0):
     )
 
 
+# Diverse prompt templates to trigger different MoE experts
+PROMPT_TEMPLATES = [
+    # Code/Programming
+    "Write a Python function that {action} using {tech}. Include error handling and documentation. The function should be production-ready and follow best practices. Consider edge cases and performance optimization.",
+    
+    # Science/Math
+    "Explain the concept of {science_topic} in detail. Include mathematical formulations, real-world applications, and recent research developments. Discuss both theoretical foundations and practical implications.",
+    
+    # Business/Finance
+    "Analyze the business strategy for {business_domain}. Consider market trends, competitive landscape, financial implications, and risk assessment. Provide actionable recommendations for stakeholders.",
+    
+    # Creative Writing
+    "Write a creative story about {story_element}. The narrative should be engaging, well-structured, and include character development. Use vivid descriptions and compelling dialogue.",
+    
+    # Technical Analysis
+    "Perform a comprehensive technical analysis of {tech_domain}. Cover architecture, performance characteristics, scalability considerations, and integration patterns. Include pros and cons.",
+    
+    # Education/Learning
+    "Create a detailed lesson plan for teaching {subject} to {audience}. Include learning objectives, activities, assessment methods, and required resources. Make it engaging and effective.",
+    
+    # Health/Medicine
+    "Discuss the medical condition {condition} including symptoms, diagnosis, treatment options, and prevention strategies. Cover both conventional and emerging therapies.",
+    
+    # Legal/Policy
+    "Analyze the legal implications of {legal_topic}. Consider regulatory frameworks, compliance requirements, precedent cases, and potential future developments.",
+    
+    # Data/Analytics
+    "Design a data analysis approach for {data_domain}. Include data collection methods, statistical techniques, visualization strategies, and interpretation guidelines.",
+    
+    # Philosophy/Ethics
+    "Explore the philosophical dimensions of {philosophical_topic}. Examine different schools of thought, ethical implications, and contemporary relevance."
+]
+
+# Rich vocabulary pools for different domains
+PROMPT_VARIABLES = {
+    'action': [
+        'processes large datasets', 'implements machine learning algorithms', 'handles API integrations',
+        'manages database transactions', 'optimizes performance bottlenecks', 'validates user input',
+        'generates reports', 'processes real-time streams', 'handles concurrent requests',
+        'implements caching strategies', 'manages file operations', 'processes images'
+    ],
+    'tech': [
+        'asyncio and aiohttp', 'pandas and numpy', 'FastAPI and SQLAlchemy', 'Redis and Celery',
+        'Docker and Kubernetes', 'TensorFlow and PyTorch', 'GraphQL and MongoDB',
+        'Apache Kafka and Spark', 'Elasticsearch and Kibana', 'PostgreSQL and TimescaleDB'
+    ],
+    'science_topic': [
+        'quantum entanglement', 'CRISPR gene editing', 'machine learning optimization',
+        'blockchain consensus mechanisms', 'neural network architectures', 'renewable energy systems',
+        'climate modeling techniques', 'protein folding dynamics', 'space-time relativity',
+        'computational fluid dynamics', 'molecular simulation methods', 'artificial intelligence ethics'
+    ],
+    'business_domain': [
+        'e-commerce platforms', 'fintech startups', 'healthcare technology', 'renewable energy',
+        'autonomous vehicles', 'digital marketing', 'supply chain optimization', 'cybersecurity',
+        'biotechnology research', 'sustainable manufacturing', 'remote work solutions', 'EdTech platforms'
+    ],
+    'story_element': [
+        'time travelers discovering ancient civilizations', 'AI researchers in a post-apocalyptic world',
+        'space colonists facing ethical dilemmas', 'marine biologists exploring deep ocean mysteries',
+        'quantum physicists trapped in parallel dimensions', 'environmental scientists saving ecosystems',
+        'cybersecurity experts uncovering global conspiracies', 'archaeologists finding alien artifacts'
+    ],
+    'tech_domain': [
+        'microservices architecture', 'distributed systems design', 'real-time data processing',
+        'cloud-native applications', 'edge computing platforms', 'serverless architectures',
+        'container orchestration', 'streaming analytics', 'blockchain networks', 'neural networks'
+    ],
+    'subject': [
+        'advanced calculus', 'molecular biology', 'international relations', 'cognitive psychology',
+        'environmental science', 'computer algorithms', 'financial economics', 'quantum physics',
+        'comparative literature', 'organic chemistry', 'political philosophy', 'data structures'
+    ],
+    'audience': [
+        'graduate students', 'industry professionals', 'high school students', 'research scientists',
+        'business executives', 'software developers', 'healthcare workers', 'policy makers'
+    ],
+    'condition': [
+        'Alzheimer\'s disease', 'Type 2 diabetes', 'cardiovascular disease', 'autoimmune disorders',
+        'mental health conditions', 'infectious diseases', 'genetic disorders', 'cancer treatment',
+        'neurological conditions', 'metabolic syndromes', 'respiratory diseases', 'chronic pain'
+    ],
+    'legal_topic': [
+        'artificial intelligence regulation', 'data privacy legislation', 'intellectual property rights',
+        'environmental compliance', 'healthcare regulations', 'financial services law',
+        'employment rights', 'international trade agreements', 'cybersecurity frameworks', 'patent law'
+    ],
+    'data_domain': [
+        'customer behavior analytics', 'financial risk assessment', 'supply chain optimization',
+        'healthcare outcomes research', 'climate change modeling', 'social media sentiment',
+        'energy consumption patterns', 'transportation logistics', 'market trend analysis', 'fraud detection'
+    ],
+    'philosophical_topic': [
+        'consciousness and artificial intelligence', 'ethics of genetic engineering', 'nature of reality and simulation',
+        'moral implications of automation', 'free will versus determinism', 'environmental ethics',
+        'digital privacy and surveillance', 'social justice and equality', 'meaning and purpose in life'
+    ]
+}
+
+def estimate_tokens(text: str) -> int:
+    """Better token estimation using word count and character analysis"""
+    # More accurate estimation based on typical tokenization patterns
+    words = text.split()
+    chars = len(text)
+    
+    # Estimate based on multiple factors:
+    # - Average word length and typical subword tokenization
+    # - Character count with adjustment for whitespace
+    # - This is more accurate than simple char/4 ratio
+    word_tokens = len(words) * 1.3  # Average 1.3 tokens per word
+    char_tokens = chars / 3.5       # More accurate ratio for technical text
+    
+    # Use the higher estimate to be conservative
+    return int(max(word_tokens, char_tokens))
+
+def generate_cacheable_prompt(target_tokens: int, cache_prefix_ratio: float = 0.15) -> str:
+    """Generate a prompt with cacheable prefix and diverse suffix for MoE testing"""
+    
+    cache_prefix_tokens = int(target_tokens * cache_prefix_ratio)
+    variable_suffix_tokens = target_tokens - cache_prefix_tokens
+    
+    # Shared cacheable prefix (consistent across requests)
+    cache_prefix = """You are an expert AI assistant with deep knowledge across multiple domains including technology, science, business, healthcare, education, and creative fields. Your expertise spans software development, data analysis, machine learning, cybersecurity, biotechnology, financial systems, legal frameworks, environmental science, and educational methodologies.
+
+When providing responses, you should:
+1. Draw from comprehensive knowledge across disciplines
+2. Provide detailed technical explanations with practical examples
+3. Consider multiple perspectives and interdisciplinary connections
+4. Include current best practices and emerging trends
+5. Address implementation challenges and real-world constraints
+6. Incorporate relevant metrics, benchmarks, and performance considerations
+7. Discuss ethical implications and societal impacts
+8. Provide actionable recommendations with clear justification
+9. Consider scalability, maintainability, and long-term viability
+10. Address security, compliance, and risk management aspects
+
+Your responses should integrate cross-functional requirements including performance optimization, user experience design, accessibility standards, internationalization needs, monitoring and observability, testing strategies, deployment considerations, and environmental sustainability factors."""
+    
+    # Pad the prefix to reach target cache tokens
+    current_cache_tokens = estimate_tokens(cache_prefix)
+    
+    # Add technical padding to reach cache prefix target
+    cache_padding_elements = [
+        "Advanced algorithmic optimization techniques", "Distributed systems architecture patterns",
+        "Machine learning model deployment strategies", "Cybersecurity threat mitigation frameworks",
+        "Data governance and privacy protection protocols", "Cloud-native application development methodologies",
+        "Microservices integration and orchestration patterns", "Real-time analytics and streaming processing",
+        "Artificial intelligence ethics and responsible AI practices", "Blockchain consensus mechanisms and cryptographic security",
+        "Internet of Things device management and edge computing", "DevOps automation and continuous integration pipelines",
+        "Database optimization and performance tuning strategies", "Network security and intrusion detection systems",
+        "Container orchestration and service mesh technologies", "API design patterns and RESTful architecture principles",
+        "Serverless computing and function-as-a-service platforms", "Identity and access management frameworks",
+        "Disaster recovery and business continuity planning", "Compliance frameworks and regulatory requirements",
+        "Quality assurance and automated testing methodologies", "Agile development and project management practices",
+        "User interface design and human-computer interaction", "Performance monitoring and observability tools",
+        "Data visualization and business intelligence systems", "Enterprise integration patterns and middleware solutions"
+    ]
+    
+    while current_cache_tokens < cache_prefix_tokens:
+        padding = random.choice(cache_padding_elements)
+        cache_prefix += f" Consider {padding} in your analysis."
+        current_cache_tokens = estimate_tokens(cache_prefix)
+    
+    # Generate diverse variable suffix
+    template = random.choice(PROMPT_TEMPLATES)
+    
+    # Fill in variables for diverse content
+    variable_suffix = template
+    for var_type, options in PROMPT_VARIABLES.items():
+        if '{' + var_type + '}' in variable_suffix:
+            variable_suffix = variable_suffix.replace('{' + var_type + '}', random.choice(options))
+    
+    # Add diverse context to reach target suffix length
+    context_additions = [
+        "Provide comprehensive technical documentation with code examples and implementation details.",
+        "Include step-by-step tutorials and hands-on practical exercises for better understanding.",
+        "Analyze competitive landscape and market positioning strategies with detailed case studies.",
+        "Examine regulatory compliance requirements and legal implications across different jurisdictions.",
+        "Explore innovative approaches and cutting-edge research developments in the field.",
+        "Discuss integration challenges and interoperability considerations with existing systems.",
+        "Address scalability concerns and performance optimization techniques for large-scale deployment.",
+        "Consider user adoption strategies and change management processes for successful implementation.",
+        "Evaluate cost-benefit analysis and return on investment calculations for stakeholder buy-in.",
+        "Assess risk factors and develop comprehensive mitigation strategies with contingency planning."
+    ]
+    
+    current_suffix_tokens = estimate_tokens(variable_suffix)
+    additions_used = set()
+    
+    while current_suffix_tokens < variable_suffix_tokens:
+        available_additions = [add for add in context_additions if add not in additions_used]
+        
+        if not available_additions:
+            # Generate dynamic elaborations
+            dynamic_elaborations = [
+                f"Furthermore, examine the impact on {random.choice(['stakeholder relationships', 'operational efficiency', 'technological innovation', 'market dynamics', 'regulatory compliance'])} and develop strategic responses.",
+                f"Additionally, consider {random.choice(['emerging technologies', 'industry standards', 'best practices', 'competitive pressures', 'customer expectations'])} that may influence decision-making processes.",
+                f"Moreover, analyze {random.choice(['data quality requirements', 'security protocols', 'performance metrics', 'user experience factors', 'integration patterns'])} that are critical for successful implementation.",
+                f"It's essential to evaluate {random.choice(['resource allocation', 'timeline constraints', 'budget considerations', 'technical limitations', 'organizational capabilities'])} when planning the approach.",
+                f"Consider the implications of {random.choice(['technological trends', 'market shifts', 'regulatory changes', 'competitive moves', 'customer behavior'])} on long-term strategy and adaptation."
+            ]
+            addition = random.choice(dynamic_elaborations)
+        else:
+            addition = random.choice(available_additions)
+            additions_used.add(addition)
+        
+        variable_suffix += " " + addition
+        current_suffix_tokens = estimate_tokens(variable_suffix)
+    
+    # Combine prefix and suffix
+    full_prompt = cache_prefix + "\n\nSpecific Task: " + variable_suffix
+    
+    return full_prompt
+
 PROMPT_PREFIX_TOKEN = "Pad "  # exactly one token
 # "Lengthy" prompt borrowed from nat.dev
 PROMPT_SUFFIX = """Generate a Django application with Authentication, JWT, Tests, DB support. Show docker-compose for python and postgres. Show the complete code for every file!"""
@@ -284,7 +498,7 @@ class OpenAIProvider(BaseProvider):
             text = choice["text"]
 
         logprobs = choice.get("logprobs", None)
-        if "tokens" in logprobs:
+        if logprobs and "tokens" in logprobs:
             logprob_tokens = len(logprobs["tokens"])
         else:
             logprob_tokens = None
@@ -588,21 +802,19 @@ class LLMUser(HttpUser):
         prompt_chars = self.environment.parsed_options.prompt_chars
         if self.environment.parsed_options.prompt_text:
             self.input = _load_curl_like_data(self.environment.parsed_options.prompt_text)
+            self._use_diverse_prompts = False
         elif prompt_chars:
+            # For character-based prompts, still use old method for compatibility
             self.input = (PROMPT_PREFIX_TOKEN * (prompt_chars // len(PROMPT_PREFIX_TOKEN) + 1) + PROMPT_SUFFIX)[
                 :prompt_chars
             ]
+            self._use_diverse_prompts = False
         else:
-            # Ensure we have enough tokens to meet the desired prompt length
-            # If prompt_tokens < PROMPT_SUFFIX_TOKENS, just pad with prefix tokens to reach the desired length (skip the suffix)
-            if self.environment.parsed_options.prompt_tokens < PROMPT_SUFFIX_TOKENS:
-                self.input = PROMPT_PREFIX_TOKEN * self.environment.parsed_options.prompt_tokens
-            else:
-                # Normal case: prefix tokens + suffix
-                self.input = (
-                    PROMPT_PREFIX_TOKEN * (self.environment.parsed_options.prompt_tokens - PROMPT_SUFFIX_TOKENS)
-                    + PROMPT_SUFFIX
-                )
+            # Generate prompts with cacheable prefix and diverse suffix for MoE experts
+            # This replaces the repetitive "Pad" token approach and supports prompt caching
+            target_tokens = self.environment.parsed_options.prompt_tokens
+            self.input = generate_cacheable_prompt(target_tokens)
+            self._use_diverse_prompts = True
 
         image_resolutions = self.environment.parsed_options.prompt_images_with_resolutions
         self.prompt_images = None
@@ -679,24 +891,34 @@ class LLMUser(HttpUser):
             if not self.environment.parsed_options.prompt_randomize:
                 return prompt
 
-            # single letters are single tokens
-            num_random_tokens = (len(prompt) - len(PROMPT_SUFFIX)) // len(PROMPT_PREFIX_TOKEN)
-            
-            if num_random_tokens > 0:
-                # Normal case: prompt has pad tokens + suffix
-                return (
-                    " ".join(chr(ord("a") + random.randint(0, 25)) for _ in range(num_random_tokens))
-                    + " "
-                    + prompt[-len(PROMPT_SUFFIX) :]
-                )
+            # For diverse prompts, we don't need the old randomization since they're already diverse
+            # But keep this for backward compatibility with old-style prompts
+            if "Pad " in prompt:  # Old-style prompt
+                # single letters are single tokens
+                num_random_tokens = (len(prompt) - len(PROMPT_SUFFIX)) // len(PROMPT_PREFIX_TOKEN)
+                
+                if num_random_tokens > 0:
+                    # Normal case: prompt has pad tokens + suffix
+                    return (
+                        " ".join(chr(ord("a") + random.randint(0, 25)) for _ in range(num_random_tokens))
+                        + " "
+                        + prompt[-len(PROMPT_SUFFIX) :]
+                    )
+                else:
+                    # Case where prompt is shorter than or equal to suffix length
+                    # Just randomize the entire prompt - replace all tokens with random ones
+                    num_tokens = len(prompt) // len(PROMPT_PREFIX_TOKEN)
+                    return " ".join(chr(ord("a") + random.randint(0, 25)) for _ in range(num_tokens))
             else:
-                # Case where prompt is shorter than or equal to suffix length
-                # Just randomize the entire prompt - replace all tokens with random ones
-                num_tokens = len(prompt) // len(PROMPT_PREFIX_TOKEN)
-                return " ".join(chr(ord("a") + random.randint(0, 25)) for _ in range(num_tokens))
+                # For new diverse prompts, just return as-is since they're already randomized
+                return prompt
 
         if isinstance(self.input, str):
-            prompt = self.input
+            # For diverse prompts, generate a fresh one each time to trigger different experts
+            if hasattr(self, '_use_diverse_prompts') and self._use_diverse_prompts:
+                prompt = generate_cacheable_prompt(self.environment.parsed_options.prompt_tokens)
+            else:
+                prompt = self.input
             images = None
         else:
             item = self.input[random.randint(0, len(self.input) - 1)]
